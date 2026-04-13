@@ -17,6 +17,7 @@ export default defineSchema({
     useDisplayName: v.optional(v.boolean()),
     email: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    isAdmin: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 

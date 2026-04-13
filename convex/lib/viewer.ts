@@ -102,3 +102,11 @@ export async function requireViewerForMutation(ctx: MutationCtx): Promise<Doc<"u
   const identity = await requireIdentity(ctx);
   return await upsertViewerFromIdentity(ctx, identity);
 }
+
+export async function requireAdmin(ctx: QueryCtx | MutationCtx): Promise<Doc<"users">> {
+  const viewer = await requireViewer(ctx);
+  if (!viewer.isAdmin) {
+    throw new ConvexError("Admin access required.");
+  }
+  return viewer;
+}
