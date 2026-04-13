@@ -4,26 +4,38 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import {
   buildPredictionRows,
+  buildCombinedPredictionData,
   calculatePredictionScore,
 } from "./lib/scoring";
-import { getViewerByIdentity, requireViewer } from "./lib/viewer";
+import { effectiveName, getViewerByIdentity, requireViewerForMutation } from "./lib/viewer";
 
 function createJoinCode(leagueId: string) {
   return leagueId.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase();
 }
 
-async function getActiveContest(ctx: { db: any }) {
+async function getActiveContestList(ctx: { db: any }): Promise<Doc<"contests">[]> {
   const settings = await ctx.db
     .query("appSettings")
     .withIndex("by_key", (q: any) => q.eq("key", "global"))
     .unique();
 
-  if (!settings?.activeContestId) {
-    return null;
+  if (!settings) return [];
+
+  if (settings.activeContestIds && settings.activeContestIds.length > 0) {
+    const contests = await Promise.all(
+      settings.activeContestIds.map((id: Id<"contests">) => ctx.db.get("contests", id)),
+    );
+    return contests.filter((c: Doc<"contests"> | null): c is Doc<"contests"> => c !== null);
   }
 
-  return await ctx.db.get("contests", settings.activeContestId);
+  if (settings.activeContestId) {
+    const contest = await ctx.db.get("contests", settings.activeContestId);
+    return contest ? [contest] : [];
+  }
+
+  return [];
 }
+
 
 async function getMemberCount(ctx: { db: any }, leagueId: Id<"leagues">) {
   const members = await ctx.db
@@ -50,7 +62,7 @@ async function addViewerToLeague(
   leagueId: Id<"leagues">,
   joinCode: string | undefined,
 ) {
-  const viewer = await requireViewer(ctx);
+  const viewer = await requireViewerForMutation(ctx);
   const league = await ctx.db.get("leagues", leagueId);
 
   if (!league) {
@@ -82,9 +94,18 @@ async function addViewerToLeague(
 }
 
 export const getLeaguesHub = query({
-  args: {},
-  handler: async (ctx) => {
-    const contest = await getActiveContest(ctx);
+  args: {
+    contestId: v.optional(v.id("contests")),
+  },
+  handler: async (ctx, args) => {
+    let contest: Doc<"contests"> | null = null;
+
+    if (args.contestId) {
+      contest = await ctx.db.get("contests", args.contestId);
+    } else {
+      const active = await getActiveContestList(ctx);
+      contest = active[0] ?? null;
+    }
 
     if (!contest) {
       return null;
@@ -115,17 +136,28 @@ export const getLeaguesHub = query({
       ),
     );
 
+    // Also surface all active contests so the UI can build a contest selector
+    const allActive = await getActiveContestList(ctx);
+
     return {
       contest: {
         _id: contest._id,
         name: contest.name,
         shortName: contest.shortName,
         slug: contest.slug,
+        contestType: contest.contestType ?? null,
       },
+      activeContests: allActive.map((c) => ({
+        _id: c._id,
+        name: c.name,
+        shortName: c.shortName,
+        slug: c.slug,
+        contestType: c.contestType ?? null,
+      })),
       viewer: viewer
         ? {
             _id: viewer._id,
-            name: viewer.name,
+            name: effectiveName(viewer),
           }
         : null,
       viewerLeagues: enriched.filter((league) => league.hasJoined),
@@ -141,7 +173,7 @@ export const createLeague = mutation({
     visibility: v.union(v.literal("public"), v.literal("private")),
   },
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await requireViewerForMutation(ctx);
     const trimmedName = args.name.trim();
 
     if (!trimmedName) {
@@ -206,7 +238,7 @@ export const leaveLeague = mutation({
     leagueId: v.id("leagues"),
   },
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await requireViewerForMutation(ctx);
     const league = await ctx.db.get("leagues", args.leagueId);
 
     if (!league) {
@@ -294,6 +326,25 @@ export const getLeagueDetail = query({
       .withIndex("by_leagueId", (q) => q.eq("leagueId", league._id))
       .collect();
 
+    // Pre-load sibling contests for combined scoring
+    const isCombined = contest.contestType === "combined";
+    let sf1Contestants: Doc<"contestants">[] = [];
+    let sf2Contestants: Doc<"contestants">[] = [];
+    let gfContestants: Doc<"contestants">[] = [];
+
+    if (isCombined) {
+      const allContests = (await ctx.db.query("contests").collect()).filter(
+        (c) => c.season === contest.season,
+      );
+      const sf1 = allContests.find((c) => c.contestType === "semi1");
+      const sf2 = allContests.find((c) => c.contestType === "semi2");
+      const gf = allContests.find((c) => c.contestType === "final");
+
+      if (sf1) sf1Contestants = await ctx.db.query("contestants").withIndex("by_contestId_and_sortOrder", (q) => q.eq("contestId", sf1._id)).collect();
+      if (sf2) sf2Contestants = await ctx.db.query("contestants").withIndex("by_contestId_and_sortOrder", (q) => q.eq("contestId", sf2._id)).collect();
+      if (gf) gfContestants = await ctx.db.query("contestants").withIndex("by_contestId_and_sortOrder", (q) => q.eq("contestId", gf._id)).collect();
+    }
+
     const members = await Promise.all(
       memberships.map(async (member) => {
         const user = await ctx.db.get("users", member.userId);
@@ -308,21 +359,55 @@ export const getLeagueDetail = query({
           return null;
         }
 
+        if (!prediction) {
+          return {
+            user: { _id: user._id, name: effectiveName(user), imageUrl: user.imageUrl ?? null },
+            joinedAt: member.joinedAt,
+            prediction: null,
+          };
+        }
+
+        if (isCombined) {
+          const combinedData = buildCombinedPredictionData(
+            prediction.ranking,
+            contestants,
+            sf1Contestants,
+            sf2Contestants,
+            gfContestants,
+          );
+          return {
+            user: { _id: user._id, name: effectiveName(user), imageUrl: user.imageUrl ?? null },
+            joinedAt: member.joinedAt,
+            prediction: {
+              _id: prediction._id,
+              updatedAt: prediction.updatedAt,
+              totalScore: combinedData.totalScore,
+              isCombined: true as const,
+              gfScore: combinedData.gfScore,
+              sf1BonusTotal: combinedData.sf1BonusTotal,
+              sf2BonusTotal: combinedData.sf2BonusTotal,
+              gfRows: combinedData.gfRows,
+              sf1BonusRows: combinedData.sf1BonusRows,
+              sf2BonusRows: combinedData.sf2BonusRows,
+              backfilledContestants: Array.from(combinedData.backfilledContestants),
+            },
+          };
+        }
+
         return {
           user: {
             _id: user._id,
-            name: user.name,
+            name: effectiveName(user),
             imageUrl: user.imageUrl ?? null,
           },
           joinedAt: member.joinedAt,
-          prediction: prediction
-            ? {
-                _id: prediction._id,
-                updatedAt: prediction.updatedAt,
-                totalScore: calculatePredictionScore(prediction.ranking, contestants),
-                rows: buildPredictionRows(prediction.ranking, contestants),
-              }
-            : null,
+          prediction: {
+            _id: prediction._id,
+            updatedAt: prediction.updatedAt,
+            totalScore: calculatePredictionScore(prediction.ranking, contestants),
+            isCombined: false as const,
+            rows: buildPredictionRows(prediction.ranking, contestants),
+          },
         };
       }),
     );

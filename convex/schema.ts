@@ -5,6 +5,7 @@ export default defineSchema({
   appSettings: defineTable({
     key: v.string(),
     activeContestId: v.optional(v.id("contests")),
+    activeContestIds: v.optional(v.array(v.id("contests"))),
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
@@ -12,6 +13,8 @@ export default defineSchema({
     tokenIdentifier: v.string(),
     clerkUserId: v.string(),
     name: v.string(),
+    displayName: v.optional(v.string()),
+    useDisplayName: v.optional(v.boolean()),
     email: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     updatedAt: v.number(),
@@ -31,6 +34,12 @@ export default defineSchema({
       v.literal("archived"),
     ),
     predictionCutoff: v.optional(v.number()),
+    contestType: v.optional(v.union(
+      v.literal("semi1"),
+      v.literal("semi2"),
+      v.literal("final"),
+      v.literal("combined"),
+    )),
     updatedAt: v.number(),
   }).index("by_slug", ["slug"]),
 
@@ -46,6 +55,12 @@ export default defineSchema({
     youtubeUrl: v.optional(v.string()),
     placement: v.optional(v.number()),
     points: v.optional(v.number()),
+    semiGroup: v.optional(v.union(
+      v.literal("semi1"),
+      v.literal("semi2"),
+      v.literal("auto"),
+    )),
+    qualified: v.optional(v.boolean()),
   })
     .index("by_contestId", ["contestId"])
     .index("by_contestId_and_sortOrder", ["contestId", "sortOrder"])

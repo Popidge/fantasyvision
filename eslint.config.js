@@ -77,5 +77,8 @@ export default defineConfig([
       "@typescript-eslint/require-await": "off",
     },
   },
-  ...convexPlugin.configs.recommended,
+  ...convexPlugin.configs.recommended.map((config) => ({
+    ...config,
+    files: ["convex/**/*.{ts,tsx}"],
+  })),
 ]);

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as contests from "../contests.js";
 import type * as leagues from "../leagues.js";
 import type * as lib_scoring from "../lib/scoring.js";
@@ -23,6 +24,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   contests: typeof contests;
   leagues: typeof leagues;
   "lib/scoring": typeof lib_scoring;

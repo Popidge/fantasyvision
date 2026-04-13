@@ -1,5 +1,7 @@
+import { ConvexError } from "convex/values";
+import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getIdentityName, getViewerByIdentity, requireIdentity } from "./lib/viewer";
+import { getViewerByIdentity, requireIdentity, requireViewer, upsertViewerFromIdentity } from "./lib/viewer";
 
 export const getViewer = query({
   args: {},
@@ -19,23 +21,33 @@ export const upsertViewer = mutation({
   args: {},
   handler: async (ctx) => {
     const identity = await requireIdentity(ctx);
-    const existing = await getViewerByIdentity(ctx, identity);
-    const now = Date.now();
+    const viewer = await upsertViewerFromIdentity(ctx, identity);
+    return viewer._id;
+  },
+});
 
-    const patch = {
-      clerkUserId: identity.subject,
-      tokenIdentifier: identity.tokenIdentifier,
-      name: getIdentityName(identity),
-      email: identity.email,
-      imageUrl: identity.pictureUrl,
-      updatedAt: now,
-    };
-
-    if (existing) {
-      await ctx.db.patch("users", existing._id, patch);
-      return existing._id;
+export const updateDisplayName = mutation({
+  args: { displayName: v.string() },
+  handler: async (ctx, { displayName }) => {
+    const trimmed = displayName.trim();
+    if (trimmed.length === 0) {
+      throw new ConvexError("Display name cannot be empty.");
     }
+    if (trimmed.length > 50) {
+      throw new ConvexError("Display name must be 50 characters or fewer.");
+    }
+    const viewer = await requireViewer(ctx);
+    await ctx.db.patch("users", viewer._id, { displayName: trimmed, updatedAt: Date.now() });
+  },
+});
 
-    return await ctx.db.insert("users", patch);
+export const updatePublicNamePreference = mutation({
+  args: { useDisplayName: v.boolean() },
+  handler: async (ctx, { useDisplayName }) => {
+    const viewer = await requireViewer(ctx);
+    if (!viewer.displayName) {
+      throw new ConvexError("Set a display name before changing this preference.");
+    }
+    await ctx.db.patch("users", viewer._id, { useDisplayName, updatedAt: Date.now() });
   },
 });

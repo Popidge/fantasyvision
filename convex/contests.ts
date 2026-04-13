@@ -1,7 +1,9 @@
+import { v } from "convex/values";
+
 import { query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { alphabeticalContestants } from "./lib/scoring";
-import { getViewerByIdentity } from "./lib/viewer";
+import { effectiveName, getViewerByIdentity } from "./lib/viewer";
 
 async function getGlobalSettings(ctx: { db: typeof query extends never ? never : any }) {
   return await ctx.db
@@ -10,14 +12,24 @@ async function getGlobalSettings(ctx: { db: typeof query extends never ? never :
     .unique();
 }
 
-async function getActiveContest(ctx: { db: any }) {
+async function getActiveContestList(ctx: { db: any }): Promise<Doc<"contests">[]> {
   const settings = await getGlobalSettings(ctx);
+  if (!settings) return [];
 
-  if (!settings?.activeContestId) {
-    return null;
+  if (settings.activeContestIds && settings.activeContestIds.length > 0) {
+    const contests = await Promise.all(
+      settings.activeContestIds.map((id: Id<"contests">) => ctx.db.get("contests", id)),
+    );
+    return contests.filter((c: Doc<"contests"> | null): c is Doc<"contests"> => c !== null);
   }
 
-  return await ctx.db.get("contests", settings.activeContestId);
+  // Legacy fallback
+  if (settings.activeContestId) {
+    const contest = await ctx.db.get("contests", settings.activeContestId);
+    return contest ? [contest] : [];
+  }
+
+  return [];
 }
 
 async function getContestantsForContest(ctx: { db: any }, contestId: Id<"contests">) {
@@ -37,6 +49,7 @@ function contestSummary(contest: Doc<"contests">) {
     description: contest.description,
     heroBlurb: contest.heroBlurb,
     status: contest.status,
+    contestType: contest.contestType ?? null,
     predictionCutoff: contest.predictionCutoff ?? null,
   };
 }
@@ -54,29 +67,46 @@ function publicLeagueCard(league: Doc<"leagues">, memberCount: number) {
 export const getHomeData = query({
   args: {},
   handler: async (ctx) => {
-    const contest = await getActiveContest(ctx);
+    const activeContests = await getActiveContestList(ctx);
 
-    if (!contest) {
+    if (activeContests.length === 0) {
       return {
-        activeContest: null,
+        activeContests: [],
         archivedContests: [],
         spotlightLeagues: [],
         stats: null,
       };
     }
 
-    const contestants = await getContestantsForContest(ctx, contest._id);
-    const allPredictions = await ctx.db
-      .query("predictions")
-      .withIndex("by_contestId", (q) => q.eq("contestId", contest._id))
-      .collect();
-    const allLeagues = await ctx.db
+    // Stats summed across all active contests
+    let totalPredictions = 0;
+    let totalPublicLeagues = 0;
+
+    for (const contest of activeContests) {
+      const predictions = await ctx.db
+        .query("predictions")
+        .withIndex("by_contestId", (q) => q.eq("contestId", contest._id))
+        .collect();
+      const leagues = await ctx.db
+        .query("leagues")
+        .withIndex("by_contestId", (q) => q.eq("contestId", contest._id))
+        .collect();
+
+      totalPredictions += predictions.length;
+      totalPublicLeagues += leagues.filter((l) => l.visibility === "public").length;
+    }
+
+    const totalUsers = await ctx.db.query("users").collect().then((rows) => rows.length);
+
+    // Spotlight leagues from the first active contest
+    const primaryContest = activeContests[0];
+    const primaryLeagues = await ctx.db
       .query("leagues")
-      .withIndex("by_contestId", (q) => q.eq("contestId", contest._id))
+      .withIndex("by_contestId", (q) => q.eq("contestId", primaryContest._id))
       .collect();
 
-    const publicLeagues = await Promise.all(
-      allLeagues
+    const spotlightLeagues = await Promise.all(
+      primaryLeagues
         .filter((league) => league.visibility === "public")
         .slice(0, 3)
         .map(async (league) => {
@@ -88,30 +118,41 @@ export const getHomeData = query({
         }),
     );
 
-    const archivedContests = (
-      await ctx.db.query("contests").collect()
-    )
-      .filter((entry) => entry._id !== contest._id)
+    const archivedContests = (await ctx.db.query("contests").collect())
+      .filter((entry) => !activeContests.some((a) => a._id === entry._id) && entry.status !== "draft")
       .sort((left, right) => right.season - left.season)
       .map(contestSummary);
 
     return {
-      activeContest: contestSummary(contest),
+      activeContests: activeContests.map(contestSummary),
       archivedContests,
-      spotlightLeagues: publicLeagues,
+      spotlightLeagues,
       stats: {
-        contestants: contestants.length,
-        predictions: allPredictions.length,
-        publicLeagues: allLeagues.filter((league) => league.visibility === "public").length,
+        users: totalUsers,
+        predictions: totalPredictions,
+        publicLeagues: totalPublicLeagues,
       },
     };
   },
 });
 
-export const getPredictPageData = query({
+export const getActiveContests = query({
   args: {},
   handler: async (ctx) => {
-    const contest = await getActiveContest(ctx);
+    const contests = await getActiveContestList(ctx);
+    return contests.map(contestSummary);
+  },
+});
+
+export const getPredictPageData = query({
+  args: {
+    contestSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const contest = await ctx.db
+      .query("contests")
+      .withIndex("by_slug", (q) => q.eq("slug", args.contestSlug))
+      .unique();
 
     if (!contest) {
       return null;
@@ -136,7 +177,7 @@ export const getPredictPageData = query({
       viewer: viewer
         ? {
             _id: viewer._id,
-            name: viewer.name,
+            name: effectiveName(viewer),
             imageUrl: viewer.imageUrl ?? null,
           }
         : null,

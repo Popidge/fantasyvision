@@ -23,4 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# AI tooling — local only, not for repo
+.claude
+.agents
+
+# Source assets (originals live outside public/)
+Eurovision_Song_Contest_2025_Stage.jpg
+
+# Older alternate implementation
 fantasyeurovision

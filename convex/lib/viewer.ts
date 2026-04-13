@@ -6,6 +6,13 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type AuthCtx = QueryCtx | MutationCtx;
 
+export function effectiveName(user: Doc<"users">): string {
+  if (user.displayName && user.useDisplayName !== false) {
+    return user.displayName;
+  }
+  return user.name;
+}
+
 export function getIdentityName(identity: UserIdentity): string {
   return (
     identity.name ??
@@ -43,6 +50,41 @@ export async function requireIdentity(ctx: AuthCtx): Promise<UserIdentity> {
   return identity;
 }
 
+export async function upsertViewerFromIdentity(
+  ctx: MutationCtx,
+  identity: UserIdentity,
+): Promise<Doc<"users">> {
+  const existing = await getViewerByIdentity(ctx, identity);
+  const patch = {
+    clerkUserId: identity.subject,
+    tokenIdentifier: identity.tokenIdentifier,
+    name: getIdentityName(identity),
+    email: identity.email,
+    imageUrl: identity.pictureUrl,
+    updatedAt: Date.now(),
+  };
+
+  if (existing) {
+    await ctx.db.patch("users", existing._id, patch);
+    const viewer = await ctx.db.get("users", existing._id);
+
+    if (!viewer) {
+      throw new ConvexError("Your profile could not be loaded. Please try again.");
+    }
+
+    return viewer;
+  }
+
+  const viewerId = await ctx.db.insert("users", patch);
+  const viewer = await ctx.db.get("users", viewerId);
+
+  if (!viewer) {
+    throw new ConvexError("Your profile could not be created. Please try again.");
+  }
+
+  return viewer;
+}
+
 export async function requireViewer(ctx: QueryCtx | MutationCtx): Promise<Doc<"users">> {
   const identity = await requireIdentity(ctx);
   const viewer = await getViewerByIdentity(ctx, identity);
@@ -54,4 +96,9 @@ export async function requireViewer(ctx: QueryCtx | MutationCtx): Promise<Doc<"u
   }
 
   return viewer;
+}
+
+export async function requireViewerForMutation(ctx: MutationCtx): Promise<Doc<"users">> {
+  const identity = await requireIdentity(ctx);
+  return await upsertViewerFromIdentity(ctx, identity);
 }
