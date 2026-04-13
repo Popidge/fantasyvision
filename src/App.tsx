@@ -130,6 +130,7 @@ export default function App() {
             <Route path="/leagues/:leagueId" element={<LeagueDetailPage />} />
             <Route path="/share/:predictionId" element={<SharedPredictionPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
@@ -170,6 +171,7 @@ function ViewerBootstrap() {
 
 function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const viewer = useQuery(api.users.getViewer);
 
   function closeMenu() {
     setMenuOpen(false);
@@ -194,6 +196,7 @@ function SiteHeader() {
           <NavItem to="/predict">Predict</NavItem>
           <NavItem to="/my-picks">My Predictions</NavItem>
           <NavItem to="/leagues">My Leagues</NavItem>
+          {viewer?.isAdmin && <NavItem to="/admin">Admin</NavItem>}
         </nav>
 
         <div className="site-header__auth site-header__auth--desktop">
@@ -231,6 +234,7 @@ function SiteHeader() {
           <NavItem to="/predict" onClick={closeMenu}>Predict</NavItem>
           <NavItem to="/my-picks" onClick={closeMenu}>My Predictions</NavItem>
           <NavItem to="/leagues" onClick={closeMenu}>My Leagues</NavItem>
+          {viewer?.isAdmin && <NavItem to="/admin" onClick={closeMenu}>Admin</NavItem>}
         </nav>
         <div className="mobile-menu__auth">
           <SignedOut>
@@ -2003,6 +2007,341 @@ function ProfilePage() {
             </div>
           </div>
         )}
+      </section>
+    </div>
+  );
+}
+
+// ─── Admin ────────────────────────────────────────────────────────────────────
+
+function AdminPage() {
+  usePageMeta("Admin");
+  const viewer = useQuery(api.users.getViewer);
+  const data = useQuery(api.admin.getAdminOverview);
+
+  const setActiveContests = useMutation(api.admin.setActiveContests);
+  const setContestStatus = useMutation(api.admin.setContestStatus);
+  const setUserAdmin = useMutation(api.admin.setUserAdmin);
+  const publishSemiResults = useMutation(api.admin.publishSemiResults);
+  const publishGFResults = useMutation(api.admin.publishGFResults);
+  const finalizeGFLineup = useMutation(api.admin.finalizeGFLineup);
+
+  // null = unmodified by user; derive from server data. Once the user toggles, we own the state.
+  const [activeIds, setActiveIds] = useState<Set<string> | null>(null);
+  const effectiveActiveIds = activeIds ?? new Set(data?.activeContestIds ?? []);
+  const [activeMsg, setActiveMsg] = useState<string | null>(null);
+
+  const [semiContestId, setSemiContestId] = useState("");
+  const [semiJson, setSemiJson] = useState("");
+  const [semiMsg, setSemiMsg] = useState<string | null>(null);
+
+  const [gfContestId, setGfContestId] = useState("");
+  const [gfJson, setGfJson] = useState("");
+  const [gfMsg, setGfMsg] = useState<string | null>(null);
+
+  const [sf1Id, setSf1Id] = useState("");
+  const [sf2Id, setSf2Id] = useState("");
+  const [gfFinalizeId, setGfFinalizeId] = useState("");
+  const [finalizeMsg, setFinalizeMsg] = useState<string | null>(null);
+
+  if (viewer === undefined || data === undefined) {
+    return <LoadingState label="Loading admin panel..." />;
+  }
+
+  if (!viewer?.isAdmin) {
+    return (
+      <EmptyPanel
+        title="Access denied"
+        description="This page is only available to admins."
+      />
+    );
+  }
+
+  const handleSaveActive = async () => {
+    setActiveMsg(null);
+    try {
+      await setActiveContests({ contestIds: [...effectiveActiveIds] as Id<"contests">[] });
+      setActiveMsg("Active contests saved.");
+    } catch (err) {
+      setActiveMsg(getErrorMessage(err));
+    }
+  };
+
+  const handlePublishSemi = async () => {
+    setSemiMsg(null);
+    try {
+      const results = JSON.parse(semiJson) as { entryId: string; placement: number; qualified: boolean }[];
+      const res = await publishSemiResults({ contestId: semiContestId as Id<"contests">, results });
+      setSemiMsg(`Published. ${res.updated} entries updated.`);
+    } catch (err) {
+      setSemiMsg(getErrorMessage(err));
+    }
+  };
+
+  const handlePublishGF = async () => {
+    setGfMsg(null);
+    try {
+      const results = JSON.parse(gfJson) as { entryId: string; placement: number; points: number }[];
+      const res = await publishGFResults({ contestId: gfContestId as Id<"contests">, results });
+      setGfMsg(`Published. ${res.updated} entries updated.`);
+    } catch (err) {
+      setGfMsg(getErrorMessage(err));
+    }
+  };
+
+  const handleFinalize = async () => {
+    setFinalizeMsg(null);
+    try {
+      const res = await finalizeGFLineup({
+        sf1ContestId: sf1Id as Id<"contests">,
+        sf2ContestId: sf2Id as Id<"contests">,
+        gfContestId: gfFinalizeId as Id<"contests">,
+      });
+      setFinalizeMsg(`Done. ${res.added} qualifier(s) added to GF.`);
+    } catch (err) {
+      setFinalizeMsg(getErrorMessage(err));
+    }
+  };
+
+  const STATUS_OPTIONS = ["draft", "open", "results", "archived"] as const;
+
+  return (
+    <div className="page-shell">
+      <section className="panel">
+        <PageHeading
+          eyebrow="Admin"
+          title="Admin Panel"
+          description="Manage contests, publish results, and control user permissions."
+        />
+      </section>
+
+      {/* Contests */}
+      <section className="panel">
+        <h2 className="section-title">Contests</h2>
+        <p className="muted-copy">Check contests to make them active. Change status per row.</p>
+
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Active</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.contests.map((contest) => (
+                <tr key={contest._id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={effectiveActiveIds.has(contest._id)}
+                      onChange={(e) => {
+                        setActiveIds((prev) => {
+                          const next = new Set(prev ?? data.activeContestIds);
+                          if (e.target.checked) next.add(contest._id);
+                          else next.delete(contest._id);
+                          return next;
+                        });
+                        setActiveMsg(null);
+                      }}
+                    />
+                  </td>
+                  <td>{contest.name}</td>
+                  <td>{contest.contestType ?? "—"}</td>
+                  <td>
+                    <select
+                      value={contest.status}
+                      onChange={(e) => {
+                        void setContestStatus({
+                          contestId: contest._id,
+                          status: e.target.value as typeof STATUS_OPTIONS[number],
+                        }).catch((err: unknown) => alert(getErrorMessage(err)));
+                      }}
+                    >
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="form-actions">
+          <button className="button button--primary" onClick={() => void handleSaveActive()} type="button">
+            Save Active Contests
+          </button>
+          {activeMsg && <p className="inline-message">{activeMsg}</p>}
+        </div>
+      </section>
+
+      {/* Results publishing */}
+      <section className="panel">
+        <h2 className="section-title">Publish Semi-Final Results</h2>
+        <p className="muted-copy">
+          JSON array of{" "}
+          <code>{"[{ entryId, placement, qualified }]"}</code>. Sets contest status to <em>results</em>.
+        </p>
+        <div className="form-stack">
+          <label className="field">
+            <span>Contest</span>
+            <select value={semiContestId} onChange={(e) => setSemiContestId(e.target.value)}>
+              <option value="">— select —</option>
+              {data.contests
+                .filter((c) => c.contestType === "semi1" || c.contestType === "semi2")
+                .map((c) => (
+                  <option key={c._id} value={c._id}>{c.name}</option>
+                ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Results JSON</span>
+            <textarea
+              className="admin-textarea"
+              rows={6}
+              value={semiJson}
+              onChange={(e) => setSemiJson(e.target.value)}
+              placeholder={'[{"entryId":"au","placement":1,"qualified":true}]'}
+            />
+          </label>
+          {semiMsg && <p className="inline-message">{semiMsg}</p>}
+          <div className="form-actions">
+            <button
+              className="button button--primary"
+              disabled={!semiContestId || !semiJson.trim()}
+              onClick={() => void handlePublishSemi()}
+              type="button"
+            >
+              Publish Semi Results
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2 className="section-title">Finalize Grand Final Lineup</h2>
+        <p className="muted-copy">
+          Copies qualified semi-finalists into the GF contest and sets it to <em>open</em>.
+        </p>
+        <div className="form-stack">
+          <label className="field">
+            <span>SF1 Contest</span>
+            <select value={sf1Id} onChange={(e) => setSf1Id(e.target.value)}>
+              <option value="">— select —</option>
+              {data.contests.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>SF2 Contest</span>
+            <select value={sf2Id} onChange={(e) => setSf2Id(e.target.value)}>
+              <option value="">— select —</option>
+              {data.contests.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>GF Contest</span>
+            <select value={gfFinalizeId} onChange={(e) => setGfFinalizeId(e.target.value)}>
+              <option value="">— select —</option>
+              {data.contests.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          </label>
+          {finalizeMsg && <p className="inline-message">{finalizeMsg}</p>}
+          <div className="form-actions">
+            <button
+              className="button button--primary"
+              disabled={!sf1Id || !sf2Id || !gfFinalizeId}
+              onClick={() => void handleFinalize()}
+              type="button"
+            >
+              Finalize GF Lineup
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2 className="section-title">Publish Grand Final Results</h2>
+        <p className="muted-copy">
+          JSON array of{" "}
+          <code>{"[{ entryId, placement, points }]"}</code>. Sets contest status to <em>results</em>.
+        </p>
+        <div className="form-stack">
+          <label className="field">
+            <span>Contest</span>
+            <select value={gfContestId} onChange={(e) => setGfContestId(e.target.value)}>
+              <option value="">— select —</option>
+              {data.contests
+                .filter((c) => c.contestType === "final")
+                .map((c) => (
+                  <option key={c._id} value={c._id}>{c.name}</option>
+                ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Results JSON</span>
+            <textarea
+              className="admin-textarea"
+              rows={6}
+              value={gfJson}
+              onChange={(e) => setGfJson(e.target.value)}
+              placeholder={'[{"entryId":"au","placement":1,"points":468}]'}
+            />
+          </label>
+          {gfMsg && <p className="inline-message">{gfMsg}</p>}
+          <div className="form-actions">
+            <button
+              className="button button--primary"
+              disabled={!gfContestId || !gfJson.trim()}
+              onClick={() => void handlePublishGF()}
+              type="button"
+            >
+              Publish GF Results
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Users */}
+      <section className="panel">
+        <h2 className="section-title">Users ({data.users.length})</h2>
+        <p className="muted-copy">
+          Toggle admin access. To bootstrap the first admin, set <code>isAdmin: true</code> directly in the Convex dashboard.
+        </p>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Display Name</th>
+                <th>Email</th>
+                <th>Admin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.users.map((user) => (
+                <tr key={user._id}>
+                  <td>{user.name}</td>
+                  <td>{user.displayName ?? "—"}</td>
+                  <td>{user.email ?? "—"}</td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={user.isAdmin}
+                      onChange={(e) => {
+                        void setUserAdmin({ userId: user._id, isAdmin: e.target.checked })
+                          .catch((err: unknown) => alert(getErrorMessage(err)));
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

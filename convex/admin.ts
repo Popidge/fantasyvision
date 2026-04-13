@@ -1,12 +1,53 @@
 import { ConvexError, v } from "convex/values";
 
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
+import { requireAdmin } from "./lib/viewer";
+
+// ─── Queries ─────────────────────────────────────────────────────────────────
+
+export const getAdminOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+
+    const [contests, users, settings] = await Promise.all([
+      ctx.db.query("contests").collect(),
+      ctx.db.query("users").collect(),
+      ctx.db
+        .query("appSettings")
+        .withIndex("by_key", (q) => q.eq("key", "global"))
+        .unique(),
+    ]);
+
+    const activeContestIds: string[] =
+      settings?.activeContestIds ??
+      (settings?.activeContestId ? [settings.activeContestId] : []);
+
+    return {
+      contests: contests.sort((a, b) => b.season - a.season || a.name.localeCompare(b.name)),
+      users: users
+        .map((u) => ({
+          _id: u._id,
+          name: u.name,
+          displayName: u.displayName ?? null,
+          email: u.email ?? null,
+          isAdmin: u.isAdmin ?? false,
+          clerkUserId: u.clerkUserId,
+        }))
+        .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")),
+      activeContestIds,
+    };
+  },
+});
+
+// ─── Contest management ───────────────────────────────────────────────────────
 
 export const setActiveContests = mutation({
   args: {
     contestIds: v.array(v.id("contests")),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
     const now = Date.now();
     const settings = await ctx.db
       .query("appSettings")
@@ -29,6 +70,29 @@ export const setActiveContests = mutation({
   },
 });
 
+export const setContestStatus = mutation({
+  args: {
+    contestId: v.id("contests"),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("open"),
+      v.literal("results"),
+      v.literal("archived"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const contest = await ctx.db.get("contests", args.contestId);
+    if (!contest) throw new ConvexError("Contest not found.");
+    await ctx.db.patch("contests", args.contestId, {
+      status: args.status,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// ─── Results publishing ───────────────────────────────────────────────────────
+
 export const publishSemiResults = mutation({
   args: {
     contestId: v.id("contests"),
@@ -41,6 +105,7 @@ export const publishSemiResults = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
     const contest = await ctx.db.get("contests", args.contestId);
     if (!contest) throw new ConvexError("Contest not found.");
     if (contest.contestType !== "semi1" && contest.contestType !== "semi2") {
@@ -79,13 +144,13 @@ export const finalizeGFLineup = mutation({
     gfContestId: v.id("contests"),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
     const gfContest = await ctx.db.get("contests", args.gfContestId);
     if (!gfContest) throw new ConvexError("GF contest not found.");
     if (gfContest.contestType !== "final") {
       throw new ConvexError("Target contest is not a grand final.");
     }
 
-    // Collect qualifiers from both semis
     const sf1Qualified = (
       await ctx.db
         .query("contestants")
@@ -102,26 +167,22 @@ export const finalizeGFLineup = mutation({
 
     const allQualified = [...sf1Qualified, ...sf2Qualified];
 
-    // Get existing GF contestant entryIds (auto-qualifiers already seeded)
     const existingGFContestants = await ctx.db
       .query("contestants")
       .withIndex("by_contestId", (q) => q.eq("contestId", args.gfContestId))
       .collect();
     const existingEntryIds = new Set(existingGFContestants.map((c) => c.entryId));
 
-    // Determine next sortOrder (auto-qualifiers already have their sortOrders set)
     const maxExistingSortOrder = existingGFContestants.reduce(
       (max, c) => Math.max(max, c.sortOrder),
       0,
     );
 
-    // Insert qualified semi-finalists in alphabetical order
     const sorted = [...allQualified].sort((a, b) => a.country.localeCompare(b.country));
     let sortOrder = maxExistingSortOrder + 1;
 
     for (const contestant of sorted) {
       if (existingEntryIds.has(contestant.entryId)) continue;
-
       await ctx.db.insert("contestants", {
         contestId: args.gfContestId,
         entryId: contestant.entryId,
@@ -141,7 +202,9 @@ export const finalizeGFLineup = mutation({
       updatedAt: Date.now(),
     });
 
-    return { added: sorted.length - (sorted.filter((c) => existingEntryIds.has(c.entryId)).length) };
+    return {
+      added: sorted.filter((c) => !existingEntryIds.has(c.entryId)).length,
+    };
   },
 });
 
@@ -157,6 +220,7 @@ export const publishGFResults = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
     const contest = await ctx.db.get("contests", args.contestId);
     if (!contest) throw new ConvexError("Contest not found.");
     if (contest.contestType !== "final") {
@@ -185,5 +249,23 @@ export const publishGFResults = mutation({
     });
 
     return { updated: args.results.length };
+  },
+});
+
+// ─── User management ──────────────────────────────────────────────────────────
+
+export const setUserAdmin = mutation({
+  args: {
+    userId: v.id("users"),
+    isAdmin: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const user = await ctx.db.get("users", args.userId);
+    if (!user) throw new ConvexError("User not found.");
+    await ctx.db.patch("users", args.userId, {
+      isAdmin: args.isAdmin,
+      updatedAt: Date.now(),
+    });
   },
 });
