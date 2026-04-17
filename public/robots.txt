@@ -1,0 +1,11 @@
+User-agent: *
+Disallow: /admin
+Disallow: /profile
+Disallow: /my-picks
+Disallow: /leagues/
+Disallow: /share/
+
+Allow: /
+Allow: /predict
+
+Sitemap: https://www.fantasyvision.app/sitemap.xml
