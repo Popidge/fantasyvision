@@ -1,0 +1,60 @@
+# FantasyVision
+
+> FantasyVision is a free web-based Fantasy Eurovision Song Contest game. Players predict the finishing order of Eurovision contestants before the broadcast, score points based on placement accuracy, and compete in public or private leagues.
+
+FantasyVision is available at https://www.fantasyvision.app and is free to use. Account creation is optional — unauthenticated users can build and save a prediction locally before signing up.
+
+## How it works
+
+Players drag and drop Eurovision contestants into their predicted finishing order before the contest airs. When official results are published, scores are calculated automatically across all saved predictions.
+
+## Scoring system
+
+Points are awarded based on how close each predicted placement is to the actual placement:
+
+- Exact match (correct rank): 12 points
+- Off by 1 place: 10 points
+- Off by 2 places: 8 points
+- Off by 3 places: 7 points
+- Off by 4 places: 6 points
+- Off by 5 places: 5 points
+- Off by 6 places: 4 points
+- Off by 7 places: 3 points
+- Off by 8 places: 2 points
+- Off by 9 places: 1 point
+- Off by 10 or more places: 0 points
+
+Scores remain null until official placement results are published. Once results are live, all saved predictions are scored retroactively.
+
+## Leagues
+
+Users can create public or private leagues for each contest. Private leagues use a join code (the last 8 alphanumeric characters of the league ID, uppercased). The leaderboard ranks all members by total prediction score. League creators cannot leave while other members remain in the league.
+
+## Contest types
+
+- Semi Final 1: Predict the finishing order of Semi Final 1 contestants
+- Semi Final 2: Predict the finishing order of Semi Final 2 contestants
+- Grand Final: Predict the Grand Final finishing order
+- Combined: Rank all contestants. The top qualifiers become Grand Final picks. Bonus points are awarded for correctly predicting semi-final rankings within the qualifiers.
+
+## Current contest
+
+Eurovision Song Contest 2026 Grand Final predictions are open at https://www.fantasyvision.app/predict
+
+## Sharing
+
+Every saved prediction generates a unique shareable URL at /share/{predictionId} so users can compare picks before and after results are announced.
+
+## Technical
+
+- Frontend: React 19, React Router v7, Tailwind CSS v4, Vite
+- Backend: Convex (real-time database and serverless functions)
+- Authentication: Clerk (optional sign-in)
+- Hosting: Vercel
+
+## Legal
+
+FantasyVision is an independent fan application. It is not affiliated with or licensed by the European Broadcasting Union (EBU). "Eurovision Song Contest" is a trademark of the EBU.
+
+Privacy policy: https://www.fantasyvision.app/privacy
+Terms of service: https://www.fantasyvision.app/terms

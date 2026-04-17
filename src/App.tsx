@@ -102,7 +102,7 @@ function setMetaTag(property: string, content: string) {
 
 function usePageMeta(title: string, opts?: { description?: string; imageUrl?: string }) {
   useEffect(() => {
-    const fullTitle = title === "FantasyVision" ? title : `${title} · FantasyVision`;
+    const fullTitle = title.includes("FantasyVision") ? title : `${title} · FantasyVision`;
     document.title = fullTitle;
     setMetaTag("og:title", fullTitle);
     const desc = opts?.description ?? "Drag, rank, and predict your Eurovision finishing order. Compete in leagues and see who really knows their douze points.";
@@ -131,6 +131,8 @@ export default function App() {
             <Route path="/share/:predictionId" element={<SharedPredictionPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/terms" element={<TermsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
@@ -270,7 +272,7 @@ function NavItem({ to, children, onClick }: { to: string; children: string; onCl
 }
 
 function HomePage() {
-  usePageMeta("FantasyVision");
+  usePageMeta("FantasyVision — Fantasy Eurovision 2026 Prediction Game");
   const home = useQuery(api.contests.getHomeData, {});
   const { isSignedIn } = useUser();
 
@@ -2347,6 +2349,117 @@ function AdminPage() {
   );
 }
 
+function PrivacyPage() {
+  usePageMeta("Privacy Policy");
+  return (
+    <div className="page-shell">
+      <div style={{ maxWidth: "720px", margin: "0 auto", padding: "2rem 1rem" }}>
+        <h1>Privacy Policy</h1>
+        <p><em>Last updated: April 2026</em></p>
+
+        <h2>Who we are</h2>
+        <p>
+          FantasyVision (<a href="https://www.fantasyvision.app">www.fantasyvision.app</a>) is an
+          independent fan project. It is not affiliated with or endorsed by the European Broadcasting
+          Union (EBU).
+        </p>
+
+        <h2>What data we collect</h2>
+        <p>When you create an account, we collect via Clerk (our authentication provider):</p>
+        <ul>
+          <li>Your display name</li>
+          <li>Your email address</li>
+          <li>Your profile image URL (if you use a social login)</li>
+        </ul>
+        <p>
+          We also store the predictions, league memberships, and rankings you create while using the
+          app. Unauthenticated users may store a prediction locally in their browser (localStorage)
+          — this data never leaves your device until you sign in.
+        </p>
+
+        <h2>How we use your data</h2>
+        <p>
+          Your name and profile image are displayed to other users in leagues you join and on
+          leaderboards. Your email is used only for authentication and is never shared with third
+          parties or used for marketing.
+        </p>
+
+        <h2>Data storage</h2>
+        <p>
+          Account and prediction data is stored in Convex (convex.dev), a third-party cloud
+          database. Authentication is handled by Clerk (clerk.com). Both services operate under
+          their own privacy policies.
+        </p>
+
+        <h2>Your rights</h2>
+        <p>
+          You may delete your account at any time via your profile page, which removes your
+          personal data from our database. For any privacy-related requests, contact us at{" "}
+          <a href="mailto:privacy@fantasyvision.app">privacy@fantasyvision.app</a>.
+        </p>
+
+        <h2>Cookies</h2>
+        <p>
+          We use session cookies set by Clerk for authentication purposes only. We do not use
+          advertising or tracking cookies.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TermsPage() {
+  usePageMeta("Terms of Service");
+  return (
+    <div className="page-shell">
+      <div style={{ maxWidth: "720px", margin: "0 auto", padding: "2rem 1rem" }}>
+        <h1>Terms of Service</h1>
+        <p><em>Last updated: April 2026</em></p>
+
+        <h2>Acceptance</h2>
+        <p>
+          By using FantasyVision you agree to these terms. If you do not agree, please do not use
+          the service.
+        </p>
+
+        <h2>The service</h2>
+        <p>
+          FantasyVision is a free fantasy prediction game for the Eurovision Song Contest. You can
+          rank contestants, join leagues, and compare predictions with other users. We reserve the
+          right to modify or discontinue the service at any time.
+        </p>
+
+        <h2>Your account</h2>
+        <p>
+          You are responsible for keeping your account credentials secure. You must not use the
+          service for any unlawful purpose or in a way that disrupts other users' experience.
+        </p>
+
+        <h2>Intellectual property</h2>
+        <p>
+          "Eurovision Song Contest" and all related marks are the property of the European
+          Broadcasting Union (EBU). FantasyVision is an independent fan project with no affiliation
+          to or endorsement by the EBU. Contestant names, countries, and song titles are used for
+          fan and informational purposes only.
+        </p>
+
+        <h2>Disclaimer</h2>
+        <p>
+          FantasyVision is provided "as is" without warranty of any kind. We are not liable for any
+          loss or damage arising from your use of the service, including incorrect results, data
+          loss, or service interruptions.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+          Questions about these terms?{" "}
+          <a href="mailto:hello@fantasyvision.app">hello@fantasyvision.app</a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function SiteFooter() {
   const year = new Date().getFullYear();
 
@@ -2356,6 +2469,11 @@ function SiteFooter() {
       <p>
         Made with love as a fan project. Eurovision and all related trademarks are property of the
         EBU. This application is not affiliated with or endorsed by the EBU.
+      </p>
+      <p>
+        <Link to="/privacy">Privacy Policy</Link>
+        {" · "}
+        <Link to="/terms">Terms of Service</Link>
       </p>
     </footer>
   );
